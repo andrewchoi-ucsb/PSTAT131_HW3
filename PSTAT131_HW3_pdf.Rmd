@@ -1,0 +1,244 @@
+---
+title: "R Notebook"
+author: "Andrew Choi"
+date: "2022-10-20"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+
+library(ggplot2)
+library(tidyverse)
+library(tidymodels)
+library(corrplot)
+library(discrim)
+library(klaR)
+library(corrr)
+
+set.seed(041301)
+
+```
+
+#### Question 1:
+
+```{r, echo = FALSE}
+
+setwd("~/Downloads/homework-3")
+titanic_data <- read_csv(file = "data/titanic.csv") %>% 
+  mutate(survived = factor(survived))
+
+# Creating training data set with 80% of the original data set, and testing data set with 20% of the original data set
+
+titanic_split <- titanic_data %>% initial_split(strata = survived, prop = 0.80)
+
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+
+```
+
+There seem to be quite a few missing values for the "cabin" variable, especially for observations where the "survived" variable equals "No". Additionally, the "name" variable might be difficult if not impossible to quantify and use when making predictions.
+
+The reason why it's a good idea to use stratified sampling for this data is that there are many more passengers that did not survive than those who did. By splitting up the observations of the Titanic data set into mutually exclusive subgroups, we can ensure that our sample has a fairly balanced number of people who did survive and did not survive.
+
+#### Question 2:
+
+```{r}
+
+titanic_train %>% ggplot(aes(x = survived)) + geom_histogram(stat = "count")
+
+# Calculating the probability of a person surviving the Titanic
+
+nrow(as.array(which(titanic_data$survived == "No"))) / nrow(as.array(titanic_data$survived))
+
+```
+
+Taking a look at a histogram of the outcome variable "survived", we can see that there are more "No's" than "Yes's". In fact, there are 549 "No's", but only 342 "Yes's". If we were to pick a random person out of the 891 people in the data set, there would be a 61.6161% chance that the chosen person had not survived the Titanic. Thus, we could see that the survived variable is skewed towards people who did not survive.
+
+#### Question 3:
+
+code from lab 3
+
+```{r}
+
+# Modifying the titanic data set to only contain numeric variables
+
+titanic_numerical <- mutate(titanic_train, passenger_id = NULL, survived = NULL, name = NULL, sex = NULL, ticket = NULL, cabin = NULL, embarked = NULL)
+
+# Generating the correlation matrix
+
+corrplot(cor(titanic_numerical, use = "pairwise.complete.obs"), type = "lower", col = COL2("PRGn"), tl.col = "black")
+
+```
+
+Certain predictors are more heavily correlated with each other than others. We see that fare and pclass, age and pclass, and sib_sp and age have strong negative correlations with each other. We can also see that sib_sp and parch, as well as fare and parch have strong positive correlations.
+
+#### Question 4:
+
+code from lab 3
+
+```{r}
+
+# Creating the recipe, including the required predictors, dealing with the missing values for age, dummy encoding categorical predictors, and creating interactions between the necessary predictors in order
+
+titanic_steps <- recipe(survived ~ pclass + sex + age + sib_sp + parch + fare, data = titanic_train) %>% step_impute_linear(age) %>% step_dummy(all_nominal_predictors()) %>% step_interact(terms = ~ starts_with("sex"):fare + age:fare)
+
+```
+
+#### Question 5:
+
+code from lab 3
+
+```{r}
+
+# Setting up a logistic regression model for classification using the "glm" engine
+
+log_regression <- logistic_reg() %>% set_engine("glm") %>% set_mode("classification")
+
+# Creating a workflow
+
+log_workflow <- workflow() %>% add_model(log_regression) %>% add_recipe(titanic_steps)
+
+# Using fit() to apply the workflow to the training data
+
+log_fit <- fit(log_workflow, titanic_train)
+
+```
+
+#### Question 6:
+
+code from lab 3
+
+```{r}
+
+# Setting up a linear discriminant analysis model for classification using the "MASS" engine
+
+lda_model <- discrim_linear() %>% set_mode("classification") %>% set_engine("MASS")
+
+# Creating a workflow
+
+lda_workflow <- workflow() %>% add_model(lda_model) %>% add_recipe(titanic_steps)
+
+# Using fit() to apply the workflow to the training data
+
+lda_fit <- fit(lda_workflow, titanic_train)
+
+```
+
+#### Question 7:
+
+code from lab 3
+
+```{r}
+
+# Setting up a quadratic discriminant analysis model for classification using the "MASS" engine
+
+qda_model <- discrim_quad() %>% set_mode("classification") %>% set_engine("MASS")
+
+# Creating a workflow
+
+qda_workflow <- workflow() %>% add_model(qda_model) %>% add_recipe(titanic_steps)
+
+# Using fit() to apply the workflow to the training data
+
+qda_fit <- fit(qda_workflow, titanic_train)
+
+```
+
+#### Question 8:
+
+code from lab 3
+
+```{r}
+
+# Setting up a quadratic discriminant analysis model for classification using the "MASS" engine
+
+nb_model <- naive_Bayes() %>% set_mode("classification") %>% set_args(usekernel = FALSE)
+
+# Creating a workflow
+
+nb_workflow <- workflow() %>% add_model(nb_model) %>% add_recipe(titanic_steps)
+
+# Using fit() to apply the workflow to the training data
+
+nb_fit <- fit(nb_workflow, titanic_train)
+
+```
+
+#### Question 9:
+
+```{r, echo = FALSE}
+
+# Generating predictions of each model
+
+log_predictions <- predict(log_fit, new_data = titanic_train, type = "prob")
+
+lda_predictions <- predict(lda_fit, new_data = titanic_train, type = "prob")
+
+qda_predictions <- predict(qda_fit, new_data = titanic_train, type = "prob")
+
+nb_predictions <- predict(nb_fit, new_data = titanic_train, type = "prob")
+
+all_predictions <- bind_cols(c(log_predictions, lda_predictions, qda_predictions, nb_predictions))
+
+colnames(all_predictions) <- c("LOG No", "LOG Yes", "LDA No", "LDA Yes", "QDA No", "QDA Yes", "NB No", "NB Yes")
+
+
+# Using the accuracy metric to find the accuracy of each model's predictions
+
+log_accuracy <- augment(log_fit, new_data = titanic_train) %>% accuracy(truth = as.factor(survived), estimate = .pred_class)
+
+lda_accuracy <- augment(lda_fit, new_data = titanic_train) %>% accuracy(truth = as.factor(survived), estimate = .pred_class)
+
+qda_accuracy <- augment(qda_fit, new_data = titanic_train) %>% accuracy(truth = as.factor(survived), estimate = .pred_class)
+
+nb_accuracy <- augment(nb_fit, new_data = titanic_train) %>% accuracy(truth = as.factor(survived), estimate = .pred_class)
+
+# Combining the data sets together to find the most accurate model
+
+all_accuracy <- bind_cols(c(log_accuracy, lda_accuracy, qda_accuracy, nb_accuracy))
+
+colnames(all_accuracy) <- c("LOG Metric", "LOG Estimator", "LOG Estimate", "LDA Metric", "LDA Estimator", "LDA Estimate", "QDA Metric", "QDA Estimator", "QDA Estimate", "NB Metric", "NB Estimator", "NB Estimate")
+
+all_accuracy
+
+```
+
+The logistic regression model achieved the highest accuracy on the training data, with an accuracy metric of 81.6011%.
+
+#### Question 10:
+
+```{r}
+
+# Fitting the logistic regression model to the testing data to determine the accuracy of the model on the testing data
+
+log_fit1 <- fit(log_workflow, titanic_test)
+
+augment(log_fit1, new_data = titanic_test) %>% accuracy(truth = as.factor(survived), estimate = .pred_class)
+
+# Generating a confusion matrix using the testing data
+
+augment(log_fit1, new_data = titanic_test) %>% conf_mat(truth = survived, estimate = .pred_class)
+
+# Generating roc curve with outcomes "Yes" and "No"
+
+augment(log_fit1, new_data = titanic_test) %>% roc_curve(survived, .pred_Yes) %>% autoplot()
+
+augment(log_fit1, new_data = titanic_test) %>% roc_curve(survived, .pred_No) %>% autoplot()
+
+# Finding auc when looking at different outcomes
+
+augment(log_fit1, new_data = titanic_test) %>% roc_auc(survived, .pred_Yes)
+
+augment(log_fit1, new_data = titanic_test) %>% roc_auc(survived, .pred_No)
+
+```
+
+The logistic regression model achieved an accuracy of 78.2123% on the testing data.
+
+The model performs very well when predicting if a person did not die from the titanic, based of the auc of 82.2332. However, the model performs poorly when predicting if a person did die from the titanic, achieving an auc of 0.1777.
+
+The accuracy of the logistic regression model when fitted to the testing data is very similar to it's accuracy when fitted to the training data. In both cases, the logistic regression model achieves a high accuracy between 78% - 82%.
